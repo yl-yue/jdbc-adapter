@@ -14,15 +14,25 @@
 
 package org.casbin.adapter;
 
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.SQLException;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+import javax.sql.DataSource;
+
 import org.apache.commons.collections.CollectionUtils;
 import org.casbin.jcasbin.model.Assertion;
 import org.casbin.jcasbin.model.Model;
 import org.casbin.jcasbin.persist.Adapter;
 import org.casbin.jcasbin.persist.Helper;
-
-import javax.sql.DataSource;
-import java.sql.*;
-import java.util.*;
 
 class CasbinRule {
     String ptype;
@@ -39,8 +49,10 @@ class CasbinRule {
  * It can load policy from JDBC supported database or save policy to it.
  */
 public class JDBCAdapter implements Adapter {
-    private DataSource dataSource = null;
-
+	
+	private DataSource dataSource = null;
+	private String tableName = "casbin_rule";
+	
     /**
      * JDBCAdapter is the constructor for JDBCAdapter.
      *
@@ -49,10 +61,10 @@ public class JDBCAdapter implements Adapter {
      * @param username the username of the database.
      * @param password the password of the database.
      */
-    public JDBCAdapter(String driver, String url, String username, String password) throws Exception {
-        this(new JDBCDataSource(driver, url, username, password));
-    }
-
+	public JDBCAdapter(String driver, String url, String username, String password) throws Exception {
+		this(new JDBCDataSource(driver, url, username, password));
+	}
+    
     /**
      * The constructor for JDBCAdapter, will not try to create database.
      *
@@ -61,22 +73,34 @@ public class JDBCAdapter implements Adapter {
     public JDBCAdapter(DataSource dataSource) throws Exception {
         this.dataSource = dataSource;
         migrate();
+	}
+    
+    /**
+     * The constructor for JDBCAdapter, will not try to create database.
+     *
+     * @param dataSource the JDBC DataSource.
+     * @param tableName the database tableName is casbin_rule by default.
+     */
+    public JDBCAdapter(DataSource dataSource, String tableName) throws Exception {
+        this.dataSource = dataSource;
+        this.tableName = tableName;
+        migrate();
     }
-
-    private void migrate() throws SQLException {
+    
+	private void migrate() throws SQLException {
         try (Connection conn = dataSource.getConnection(); Statement stmt = conn.createStatement()) {
-            String sql = "CREATE TABLE IF NOT EXISTS casbin_rule(ptype VARCHAR(100) NOT NULL, v0 VARCHAR(100), v1 VARCHAR(100), v2 VARCHAR(100), v3 VARCHAR(100), v4 VARCHAR(100), v5 VARCHAR(100))";
-            String productName = conn.getMetaData().getDatabaseProductName();
+            String sql = "CREATE TABLE IF NOT EXISTS " + tableName + "(ptype VARCHAR(100) NOT NULL, v0 VARCHAR(100), v1 VARCHAR(100), v2 VARCHAR(100), v3 VARCHAR(100), v4 VARCHAR(100), v5 VARCHAR(100))";
+			String productName = conn.getMetaData().getDatabaseProductName();
 
-            switch (productName) {
-                case "Oracle": {
-                    sql = "declare begin execute immediate 'CREATE TABLE CASBIN_RULE(ptype VARCHAR(100) not NULL, v0 VARCHAR(100), v1 VARCHAR(100), v2 VARCHAR(100), v3 VARCHAR(100), v4 VARCHAR(100), v5 VARCHAR(100))'; exception when others then if SQLCODE = -955 then null; else raise; end if; end;";
-                }
-                case "Microsoft SQL Server": {
-                    sql = "IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='casbin_rule' and xtype='U') CREATE TABLE casbin_rule(ptype VARCHAR(100) NOT NULL, v0 VARCHAR(100), v1 VARCHAR(100), v2 VARCHAR(100), v3 VARCHAR(100), v4 VARCHAR(100), v5 VARCHAR(100))";
-                }
+			switch (productName) {
+			case "Oracle":
+				sql = "declare begin execute immediate 'CREATE TABLE CASBIN_RULE(ptype VARCHAR(100) not NULL, v0 VARCHAR(100), v1 VARCHAR(100), v2 VARCHAR(100), v3 VARCHAR(100), v4 VARCHAR(100), v5 VARCHAR(100))'; exception when others then if SQLCODE = -955 then null; else raise; end if; end;";
+				break;
+			case "Microsoft SQL Server":
+				sql = "IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='" + tableName + "' and xtype='U') CREATE TABLE " + tableName + "(ptype VARCHAR(100) NOT NULL, v0 VARCHAR(100), v1 VARCHAR(100), v2 VARCHAR(100), v3 VARCHAR(100), v4 VARCHAR(100), v5 VARCHAR(100))";
+				break;
             }
-
+            
             stmt.executeUpdate(sql);
         }
     }
@@ -112,7 +136,7 @@ public class JDBCAdapter implements Adapter {
     public void loadPolicy(Model model) {
         try (Connection conn = dataSource.getConnection()) {
             Statement stmt = conn.createStatement();
-            ResultSet rSet = stmt.executeQuery("SELECT * FROM casbin_rule");
+            ResultSet rSet = stmt.executeQuery("SELECT * FROM " + tableName);
             ResultSetMetaData rData = rSet.getMetaData();
             while (rSet.next()) {
                 CasbinRule line = new CasbinRule();
@@ -173,8 +197,8 @@ public class JDBCAdapter implements Adapter {
      */
     @Override
     public void savePolicy(Model model) {
-        String cleanSql = "delete from casbin_rule";
-        String addSql = "INSERT INTO casbin_rule (ptype,v0,v1,v2,v3,v4,v5) VALUES(?,?,?,?,?,?,?)";
+        String cleanSql = "delete from " + tableName;
+        String addSql = "INSERT INTO " + tableName + " (ptype,v0,v1,v2,v3,v4,v5) VALUES(?,?,?,?,?,?,?)";
 
         try (Connection conn = dataSource.getConnection()) {
             conn.setAutoCommit(false);
@@ -253,7 +277,7 @@ public class JDBCAdapter implements Adapter {
     public void addPolicy(String sec, String ptype, List<String> rule) {
         if (CollectionUtils.isEmpty(rule)) return;
 
-        String sql = "INSERT INTO casbin_rule (ptype,v0,v1,v2,v3,v4,v5) VALUES(?,?,?,?,?,?,?)";
+        String sql = "INSERT INTO " + tableName + " (ptype,v0,v1,v2,v3,v4,v5) VALUES(?,?,?,?,?,?,?)";
 
         try (Connection conn = dataSource.getConnection(); PreparedStatement ps = conn.prepareStatement(sql)) {
             CasbinRule line = savePolicyLine(ptype, rule);
@@ -290,7 +314,7 @@ public class JDBCAdapter implements Adapter {
     public void removeFilteredPolicy(String sec, String ptype, int fieldIndex, String... fieldValues) {
         List<String> values = Optional.of(Arrays.asList(fieldValues)).orElse(new ArrayList<>());
         if (CollectionUtils.isEmpty(values)) return;
-        String sql = "DELETE FROM casbin_rule WHERE ptype = ?";
+        String sql = "DELETE FROM " + tableName + " WHERE ptype = ?";
         int columnIndex = fieldIndex;
         for (int i = 0; i < values.size(); i++) {
             sql = String.format("%s%s%s%s", sql, " AND v", columnIndex, " = ?");
